@@ -180,6 +180,25 @@ Pin poof's `version` and package tags as well. Each invocation installs the requ
 poof release, replacing any existing binary in `$HOME/.local/bin`; `latest` resolves
 the current release on every run. Pipeline caching is not configured by this template.
 
+## Development
+
+Run the regression suite with Python 3.9+ and Bash (no additional Python packages
+or GitHub credentials are required):
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+The tests extract the Bash scripts from `poof.yml` and run them in temporary homes
+with mocked GitHub requests and poof commands. They cover platform targets, package
+parsing, token forwarding, version replacement, XDG paths, and failure propagation.
+`azure-pipelines.yml` runs the suite on Linux and macOS. Create an Azure Pipeline
+using that file to enable these checks.
+
+These tests do not evaluate Azure template expressions or apply logging commands.
+An actual Azure Pipeline run is still needed to check secret-variable mapping,
+step conditions, and PATH persistence between tasks.
+
 ## License
 
 [MIT](LICENSE.md)

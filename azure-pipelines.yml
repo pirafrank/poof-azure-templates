@@ -1,0 +1,22 @@
+trigger:
+  - main
+
+pr:
+  - main
+
+jobs:
+  - job: RegressionTests
+    strategy:
+      matrix:
+        Linux:
+          image: ubuntu-latest
+        macOS:
+          image: macos-latest
+    pool:
+      vmImage: $(image)
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.12'
+      - bash: python3 -m unittest discover -s tests -v
+        displayName: Test template scripts
