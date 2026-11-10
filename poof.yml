@@ -31,82 +31,85 @@ steps:
       INSTALL_DIR="$HOME/.local/bin"
       mkdir -p "$INSTALL_DIR"
 
-      if [[ -f "$INSTALL_DIR/poof" ]] && { "$INSTALL_DIR/poof" --version 2>&1 | grep -q "pirafrank"; }; then
-        echo "poof already installed in $INSTALL_DIR, skipping installation"
-      else
-        TAG="${POOF_VERSION:-latest}"
-
-        # Resolve 'latest' to a concrete tag via the GitHub API
-        if [ "$TAG" = "latest" ]; then
-          echo "Fetching latest poof release tag..."
-          TAG=$(curl -fsSL \
-            ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/pirafrank/poof/releases/latest" \
-            | grep '"tag_name"' | head -1 \
-            | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
-          echo "Resolved latest poof: $TAG"
-        fi
-
-        [[ "$TAG" != v* ]] && TAG="v$TAG"
-        VERSION="${TAG#v}"
-
-        OS="$(uname -s)"
-        ARCH="$(uname -m)"
-        case "$ARCH" in
-          x86_64|amd64)   ARCH="x86_64"  ;;
-          aarch64|arm64)  ARCH="aarch64" ;;
-          i386|i586|i686) ARCH="i686"    ;;
-          armv7l|armv7)   ARCH="armv7"   ;;
-          *)
-            echo "Unsupported architecture: $ARCH"
-            exit 1
-            ;;
-        esac
-
-        case "$OS" in
-          Linux)
-            LDD_OUT=$(ldd --version 2>&1 || true)
-            if echo "$LDD_OUT" | grep -qi "glibc\|gnu libc"; then
-              TARGET="${ARCH}-unknown-linux-gnu"
-            else
-              TARGET="${ARCH}-unknown-linux-musl"
-            fi
-            ;;
-          Darwin)
-            TARGET="${ARCH}-apple-darwin"
-            ;;
-          *)
-            echo "Unsupported OS: $OS"
-            exit 1
-            ;;
-        esac
-
-        FILENAME="poof-${VERSION}-${TARGET}.tar.gz"
-        URL="https://github.com/pirafrank/poof/releases/download/${TAG}/${FILENAME}"
-
-        echo "Installing poof ${TAG} for ${TARGET}..."
-        TMP="$(mktemp -d)"
-        trap 'rm -rf "$TMP"' EXIT
-
-        curl -fL "$URL" -o "$TMP/$FILENAME"
-        tar -xzf "$TMP/$FILENAME" -C "$TMP"
-        mv "$TMP/poof" "$INSTALL_DIR/poof"
-        chmod +x "$INSTALL_DIR/poof"
+      # Undefined Azure macros are passed through literally. Treat them as no token.
+      if [[ "${GITHUB_TOKEN:-}" == '$('*')' ]]; then
+        unset GITHUB_TOKEN
       fi
 
-      echo "poof $("$INSTALL_DIR/poof" --version)"
-
-      # Resolve poof packages bin dir (XDG-aware, platform-specific)
       OS="$(uname -s)"
+      ARCH="$(uname -m)"
+      case "$ARCH" in
+        x86_64|amd64)  ARCH="x86_64" ;;
+        aarch64|arm64) ARCH="aarch64" ;;
+        *)
+          echo "Unsupported architecture: $ARCH (expected amd64 or arm64)"
+          exit 1
+          ;;
+      esac
+
       case "$OS" in
+        Linux)
+          LDD_OUT=$(ldd --version 2>&1 || true)
+          if printf '%s\n' "$LDD_OUT" | grep -qi 'glibc\|gnu libc'; then
+            TARGET="${ARCH}-unknown-linux-gnu"
+          else
+            TARGET="${ARCH}-unknown-linux-musl"
+          fi
+          # dirs::data_dir ignores relative XDG_DATA_HOME values.
+          case "${XDG_DATA_HOME:-}" in
+            /*) POOF_BIN_DIR="$XDG_DATA_HOME/poof/bin" ;;
+            *)  POOF_BIN_DIR="$HOME/.local/share/poof/bin" ;;
+          esac
+          ;;
         Darwin)
+          TARGET="${ARCH}-apple-darwin"
           POOF_BIN_DIR="$HOME/Library/Application Support/poof/bin"
           ;;
         *)
-          POOF_BIN_DIR="$HOME/.local/share/poof/bin"
+          echo "Unsupported OS: $OS (expected Linux or macOS)"
+          exit 1
           ;;
       esac
+
+      # Always install the requested release, including on persistent agents.
+      TAG="${POOF_VERSION:-latest}"
+
+      # Resolve 'latest' to a concrete tag via the GitHub API
+      if [ "$TAG" = "latest" ]; then
+        echo "Fetching latest poof release tag..."
+        API_ARGS=(-H "Accept: application/vnd.github+json")
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+          API_ARGS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+        fi
+        TAG=$(curl -fsSL \
+          "${API_ARGS[@]}" \
+          "https://api.github.com/repos/pirafrank/poof/releases/latest" \
+          | grep -m 1 '"tag_name"' \
+          | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+        echo "Resolved latest poof: $TAG"
+      fi
+
+      if [[ -z "$TAG" || "$TAG" == "null" ]]; then
+        echo "Could not resolve a poof release tag"
+        exit 1
+      fi
+      [[ "$TAG" != v* ]] && TAG="v$TAG"
+      VERSION="${TAG#v}"
+
+      FILENAME="poof-${VERSION}-${TARGET}.tar.gz"
+      URL="https://github.com/pirafrank/poof/releases/download/${TAG}/${FILENAME}"
+
+      echo "Installing poof ${TAG} for ${TARGET}..."
+      TMP="$(mktemp -d)"
+      trap 'rm -rf "$TMP"' EXIT
+
+      curl -fL "$URL" -o "$TMP/$FILENAME"
+      tar -xzf "$TMP/$FILENAME" -C "$TMP"
+      mv "$TMP/poof" "$INSTALL_DIR/poof"
+      chmod +x "$INSTALL_DIR/poof"
+
+      echo "poof $("$INSTALL_DIR/poof" --version)"
+
       mkdir -p "$POOF_BIN_DIR"
 
       # Persist PATH for subsequent steps (Azure DevOps logging commands)
@@ -120,6 +123,10 @@ steps:
   - bash: |
       set -euo pipefail
 
+      if [[ "${GITHUB_TOKEN:-}" == '$('*')' ]]; then
+        unset GITHUB_TOKEN
+      fi
+
       if ! command -v poof >/dev/null 2>&1; then
         echo "poof not found in PATH"
         exit 1
@@ -128,7 +135,8 @@ steps:
       # Split on newlines and commas, trim whitespace, skip empty lines.
       # Supports optional tag: user/repo@v1.0.0 -> poof install user/repo --tag v1.0.0
       while IFS= read -r pkg; do
-        pkg="$(echo "$pkg" | xargs 2>/dev/null || echo "$pkg")"
+        pkg="${pkg#"${pkg%%[![:space:]]*}"}"
+        pkg="${pkg%"${pkg##*[![:space:]]}"}"
         [ -z "$pkg" ] && continue
         if [[ "$pkg" == *@* ]]; then
           slug="${pkg%%@*}"
@@ -139,9 +147,9 @@ steps:
           echo "Installing ${pkg} with poof..."
           poof install "$pkg"
         fi
-      done < <(printf '%s' "${POOF_PACKAGES}" | tr ',' '\n')
+      done < <(printf '%s\n' "${POOF_PACKAGES}" | tr ',' '\n')
     displayName: "Install packages with poof"
-    condition: ne('${{ parameters.packages }}', '')
+    condition: and(succeeded(), ${{ ne(parameters.packages, '') }})
     env:
       POOF_PACKAGES: ${{ parameters.packages }}
       GITHUB_TOKEN: $(${{ parameters.githubTokenVariable }})
