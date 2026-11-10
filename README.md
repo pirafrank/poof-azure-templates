@@ -22,9 +22,12 @@ Note the connection name — you'll use it in the `resources` block below.
 
 In your pipeline or variable group, add a secret variable (e.g. `GITHUB_TOKEN`) containing
 your GitHub personal access token. Pass its name via `githubTokenVariable`.
+
 If the variable is absent or empty, requests are unauthenticated. The repository service
 connection does not supply this token to poof. `System.AccessToken` authenticates to
 Azure DevOps and cannot be used as a GitHub token.
+
+GitHub auth is used to avoid rate limit in GitHub APIs.
 
 ## Usage
 
@@ -198,6 +201,12 @@ using that file to enable these checks.
 These tests do not evaluate Azure template expressions or apply logging commands.
 An actual Azure Pipeline run is still needed to check secret-variable mapping,
 step conditions, and PATH persistence between tasks.
+
+For a live check, see `azure-pipelines-smoke.yml`. It
+installs pinned releases of poof and vault-conductor, then verifies both commands
+in a following step. `GITHUB_TOKEN` is optional; add it as a secret pipeline
+variable if authenticated GitHub API requests are needed. Run this pipeline
+manually when changing the template; it downloads real GitHub release assets.
 
 ## License
 
